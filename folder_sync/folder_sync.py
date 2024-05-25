@@ -1,6 +1,7 @@
 import hashlib
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Generator
 
@@ -31,17 +32,35 @@ class FolderSync:
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
-    def ensure_replica_exists(self) -> None:
-        """Ensure that the replica folder exists. If it doesn't, create it."""
-        if not os.path.exists(self.replica_folder):
-            os.makedirs(self.replica_folder)
+    def validate_folders(self) -> None:
+        """Ensure that the source and replica folders exist and are not the same.
+
+        :raises FileNotFoundError: if the source folder does not exist
+        :raises ValueError: if the source or replica folder is not a directory (for replica only if it already exists)
+        :raises ValueError: if the source and replica folders are the same
+        """
+        if self.source_folder == self.replica_folder:
+            raise ValueError("Source and replica folders cannot be the same.")
+
+        if not os.path.exists(self.source_folder):
+            raise FileNotFoundError(
+                f"Source folder {self.source_folder} does not exist."
+            )
+        if not os.path.isdir(self.source_folder):
+            raise ValueError(f"Source folder {self.source_folder} is not a directory.")
+
+        if not os.path.isdir(self.replica_folder) and os.path.exists(
+            self.replica_folder
+        ):
+            raise ValueError(
+                f"Replica folder {self.replica_folder} is not a directory."
+            )
 
     def handle_directory(self, src_path: str, dst_path: str) -> None:
         """Handle directory synchronization."""
-        if os.path.isdir(src_path):
-            if not os.path.exists(dst_path):
-                os.makedirs(dst_path)
-                self.log_action(f"Created directory {dst_path}")
+        if os.path.isdir(src_path) and not os.path.exists(dst_path):
+            os.makedirs(dst_path)
+            self.log_action(f"Created directory {dst_path}")
 
     def handle_file(self, src_path: str, dst_path: str) -> None:
         """Handle file synchronization."""
@@ -56,20 +75,26 @@ class FolderSync:
 
     def copy_files_to_replica(self) -> None:
         """Copy files from the source folder to the replica folder."""
-        for src_path, dst_path in self.walk_folder(self.source_folder, topdown=True):
-            self.handle_directory(src_path, dst_path)
-            self.handle_file(src_path, dst_path)
+        with ThreadPoolExecutor() as executor:
+            for src_path, dst_path in self.walk_folder(
+                self.source_folder, topdown=True
+            ):
+                executor.submit(self.handle_directory, src_path, dst_path)
+                executor.submit(self.handle_file, src_path, dst_path)
 
     def remove_extra_files_from_replica(self) -> None:
         """Remove extra files from the replica folder."""
-        for dst_path, src_path in self.walk_folder(self.replica_folder, topdown=False):
-            if not os.path.exists(src_path):
-                if os.path.isfile(dst_path):
-                    os.remove(dst_path)
-                    self.log_action(f"Removed {dst_path}")
-                elif os.path.isdir(dst_path):
-                    os.rmdir(dst_path)
-                    self.log_action(f"Removed directory {dst_path}")
+        with ThreadPoolExecutor() as executor:
+            for dst_path, src_path in self.walk_folder(
+                self.replica_folder, topdown=False
+            ):
+                if not os.path.exists(src_path):
+                    if os.path.isfile(dst_path):
+                        executor.submit(os.remove, dst_path)
+                        self.log_action(f"Removed {dst_path}")
+                    elif os.path.isdir(dst_path):
+                        executor.submit(os.rmdir, dst_path)
+                        self.log_action(f"Removed directory {dst_path}")
 
     def walk_folder(
         self, folder: str, topdown: bool = True
@@ -96,7 +121,7 @@ class FolderSync:
 
     def perform_synchronization(self) -> None:
         """Perform the synchronization process."""
-        self.ensure_replica_exists()
+        self.validate_folders()
         self.copy_files_to_replica()
         self.remove_extra_files_from_replica()
 
