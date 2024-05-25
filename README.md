@@ -11,7 +11,7 @@ Folder Sync is a Python application designed to synchronize files between two fo
 
 ## Project Management
 
-This project is managed using [Rye](https://github.com/rye/rye)
+This project is managed using [Rye](https://github.com/astral-sh/rye)
 
 Installation of Rye varies depending on the operating system. For example, on Linux / macOS, you can install Rye using the following command:
 ```commandline
